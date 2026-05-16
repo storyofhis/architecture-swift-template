@@ -9,9 +9,12 @@ import SwiftUI
 
 @main
 struct architecture_swift_templateApp: App {
+    
+    private let container = AppContainer()
+    
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(container: container)
         }
     }
 }
