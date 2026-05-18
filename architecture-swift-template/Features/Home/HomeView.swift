@@ -15,6 +15,7 @@ struct HomeView: View {
         List {
             templateStatusSection
             localStorageSection
+            apiSection
             navigationSection
         }
         .navigationTitle("SwiftUI Template")
@@ -62,5 +63,32 @@ struct HomeView: View {
     private var placeholderScreen: some View {
         Text("Next screen (placeholder)")
             .navigationTitle("Next")
+    }
+
+    private var apiSection: some View {
+        Section("API") {
+
+            HStack {
+                Text("BTC/IDR")
+                Spacer()
+
+                if viewModel.isLoading {
+                    ProgressView()
+                } else {
+                    Text(viewModel.btcPrice)
+                        .monospacedDigit()
+                }
+            }
+
+            if let error = viewModel.errorMessage {
+                Text(error)
+                    .foregroundColor(.red)
+            }
+
+            Button("Refresh API") {
+                viewModel.testAPI()
+            }
+            .buttonStyle(.appPrimary())
+        }
     }
 }
