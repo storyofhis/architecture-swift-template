@@ -13,9 +13,8 @@ struct HomeView: View {
 
     var body: some View {
         List {
+            apiSection
             templateStatusSection
-            localStorageSection
-            navigationSection
         }
         .navigationTitle("SwiftUI Template")
     }
@@ -40,27 +39,23 @@ struct HomeView: View {
         }
     }
 
-    private var localStorageSection: some View {
-        Section("Local storage (UserDefaults)") {
-            TextField("Write a note…", text: $viewModel.note)
 
-            Button("Save note") {
-                viewModel.saveNote()
-            }
-            .buttonStyle(.appPrimary())
-        }
-    }
+    private var apiSection: some View {
+        Section("API") {
 
-    private var navigationSection: some View {
-        Section("Navigation") {
-            NavigationLink("Open placeholder screen") {
-                placeholderScreen
+            Text(viewModel.serverTime)
+                .typography(.body)
+
+            Text(viewModel.btcPrice)
+
+            if let error = viewModel.errorMessage {
+                Text(error)
+                    .foregroundColor(.red)
             }
         }
-    }
-
-    private var placeholderScreen: some View {
-        Text("Next screen (placeholder)")
-            .navigationTitle("Next")
+        .onAppear {
+            viewModel.fetchAPI()
+            viewModel.getAPI()
+        }
     }
 }

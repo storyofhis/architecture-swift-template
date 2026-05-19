@@ -7,6 +7,25 @@
 
 import Foundation
 
+protocol APIRequest {
+    
+    associatedtype Response: Decodable
+    associatedtype Body: Encodable = EmptyBody
+    
+    var method: HTTPMethod { get }
+    var url: URL? { get }
+    var query: [String: String]? { get }
+    var body: Body? { get }
+}
+
+public enum HTTPMethod: String {
+    case get = "GET"
+    case post = "POST"
+    case put = "PUT"
+    case delete = "DELETE"
+}
+
+
 final class APIClient {
     private let session: URLSession
     private let decoder: JSONDecoder
@@ -19,36 +38,47 @@ final class APIClient {
         self.decoder = decoder
     }
     
-    func fetch<T: Decodable>(
-        from url: URL,
-        completion: @escaping (Result<T, Error>) -> Void
-    ) {
-        let request = URLRequest(url: url)
+    func execute<R: APIRequest>(
+        _ request: R
+    ) async throws -> R.Response {
         
-        let task = session.dataTask(with: request) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
-                return
+        guard var url = request.url else {
+            throw APIError.invalidURL
+        }
+        
+        // Query
+        if let query = request.query {
+            
+            var components = URLComponents(
+                url: url,
+                resolvingAgainstBaseURL: true
+            )
+            
+            components?.queryItems = query.map {
+                URLQueryItem(name: $0.key, value: $0.value)
             }
-        }
-    }
-    
-    func get <T: Decodable>(baseURL: URL, endpoint: Endpoint, responseType: T.Type) async throws -> T {
-        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: true) else {
-            throw APIError.invalidURL
-        }
-        
-        components.path = endpoint.path
-        
-        if !endpoint.queryItems.isEmpty{
-            components.queryItems = endpoint.queryItems
+            
+            guard let finalURL = components?.url else {
+                throw APIError.invalidURL
+            }
+            
+            url = finalURL
         }
         
-        guard let url = components.url else {
-            throw APIError.invalidURL
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = request.method.rawValue
+        
+        // Body
+        if let body = request.body {
+            urlRequest.httpBody = try JSONEncoder().encode(body)
+            
+            urlRequest.setValue(
+                "application/json",
+                forHTTPHeaderField: "Content-Type"
+            )
         }
         
-        let (data, response) = try await session.data(from: url)
+        let (data, response) = try await session.data(for: urlRequest)
         
         guard let http = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
@@ -59,7 +89,7 @@ final class APIClient {
         }
         
         do {
-            return try decoder.decode(T.self, from: data)
+            return try decoder.decode(R.Response.self, from: data)
         } catch {
             throw APIError.decoding(error)
         }

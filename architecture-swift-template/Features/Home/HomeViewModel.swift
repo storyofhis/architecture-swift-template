@@ -16,6 +16,13 @@ final class HomeViewModel: ObservableObject {
     @Published var counter: Int = 0
     @Published var note: String = ""
     
+    /// declare all of those variables that you want to show
+    @Published var btcPrice: String = "-"
+    @Published var isLoading: Bool = false
+    @Published var errorMessage: String?
+    @Published var serverTime: String = "-"
+    
+    
     init(container: AppContainer) {
         self.container = container
         load()
@@ -27,10 +34,6 @@ final class HomeViewModel: ObservableObject {
         container.store.set(String(counter), forKey: Keys.counter)
     }
     
-    func saveNote() {
-        container.store.set(note, forKey: Keys.note)
-        container.log.info("Saved note")
-    }
     
     private func load() {
         if let raw = container.store.string(forKey: Keys.counter),
@@ -38,6 +41,54 @@ final class HomeViewModel: ObservableObject {
             counter = value
         }
         note = container.store.string(forKey: Keys.note) ?? ""
+    }
+    
+    func fetchAPI() {
+        
+        Task {
+            
+            do {
+                
+                let response = try await container.api.execute(
+                    GetServerTimeRequest()
+                )
+                
+                let timestamp = Double(response.server_time)
+                
+                let date = Date(
+                    timeIntervalSince1970: timestamp / 1000
+                )
+                
+                let formatter = DateFormatter()
+                formatter.timeZone = TimeZone(secondsFromGMT: 7 * 3600)
+                formatter.dateFormat = "dd MMM yyyy HH:mm:ss"
+                
+                serverTime = formatter.string(from: date)
+                
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+    
+    func getAPI() {
+        
+        Task {
+            
+            do {
+                
+                let response = try await container.api.execute(
+                    GetTickerRequest()
+                )
+                
+                if let btc = response.tickers["btc_idr"] {
+                    btcPrice = btc.last ?? "-"
+                }
+                
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 }
 
