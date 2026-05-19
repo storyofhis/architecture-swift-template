@@ -68,8 +68,24 @@ struct HomeView: View {
     private var apiSection: some View {
         Section("API") {
 
+            // FETCH API RESULT
+            HStack {
+                Text("Server Time")
+
+                Spacer()
+
+                if viewModel.isLoading {
+                    ProgressView()
+                } else {
+                    Text(viewModel.serverTime)
+                        .monospacedDigit()
+                }
+            }
+
+            // GET API RESULT
             HStack {
                 Text("BTC/IDR")
+
                 Spacer()
 
                 if viewModel.isLoading {
@@ -80,13 +96,22 @@ struct HomeView: View {
                 }
             }
 
+            // ERROR
             if let error = viewModel.errorMessage {
                 Text(error)
                     .foregroundColor(.red)
             }
 
-            Button("Refresh API") {
-                viewModel.testAPI()
+            // BUTTONS
+            VStack(spacing: 12) {
+
+                Button("Fetch Server Time") {
+                    viewModel.fetchAPI()
+                }
+
+                Button("Get BTC Price") {
+                    viewModel.getAPI()
+                }
             }
             .buttonStyle(.appPrimary())
         }

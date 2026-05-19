@@ -10,17 +10,14 @@ import Foundation
 final class APIClient {
     private let session: URLSession
     private let decoder: JSONDecoder
-//    private let container: AppContainer
     
     
     init(
         session: URLSession = .shared,
         decoder: JSONDecoder = JSONDecoder()
-//        container: AppContainer
     ) {
         self.session = session
         self.decoder = decoder
-//        self.container = container
     }
     
     func fetch<T: Decodable>(
@@ -28,13 +25,28 @@ final class APIClient {
         completion: @escaping (Result<T, Error>) -> Void
     ) {
         let request = URLRequest(url: url)
-        
+
         let task = session.dataTask(with: request) { data, response, error in
+
             if let error = error {
                 completion(.failure(error))
                 return
             }
+
+            guard let data = data else {
+                completion(.failure(APIError.invalidResponse))
+                return
+            }
+
+            do {
+                let decoded = try self.decoder.decode(T.self, from: data)
+                completion(.success(decoded))
+            } catch {
+                completion(.failure(error))
+            }
         }
+
+        task.resume()
     }
     
     func get <T: Decodable>(baseURL: URL, endpoint: Endpoint, responseType: T.Type) async throws -> T {
@@ -43,7 +55,6 @@ final class APIClient {
         }
         
         components.path = endpoint.path
-//        container.log.info("\(components.path)")
         
         if !endpoint.queryItems.isEmpty{
             components.queryItems = endpoint.queryItems

@@ -5,6 +5,10 @@
 //  Created by Maula Izza Azizi on 18/05/26.
 //
 
+struct TimeResponse: Decodable {
+    let server_time: Int
+}
+
 struct TickerResponse: Decodable {
     let tickers: [String: Ticker]
 }
