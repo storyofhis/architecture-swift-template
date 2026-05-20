@@ -7,15 +7,46 @@
 
 import Foundation
 
-protocol APIRequest {
+enum Environment {
+    case development 
+    case production
+}
+
+enum APIConfig {
+    static let environment: Environment = .development
     
+    static var baseURL: URL{
+        switch environment {
+        case .development:
+            return URL(string: "https://indodax.com")!
+        case .production:
+            return URL(string: "https://indodax.com")!
+        }
+    }
+}
+
+protocol APIRequest {
+
     associatedtype Response: Decodable
     associatedtype Body: Encodable = EmptyBody
-    
+
     var method: HTTPMethod { get }
-    var url: URL? { get }
-    var query: [String: String]? { get }
+    var endpoint: Endpoint { get }
     var body: Body? { get }
+}
+
+func makeURL<T: APIRequest>(for request: T) -> URL {
+
+    var components = URLComponents(
+        url: APIConfig.baseURL.appendingPathComponent(request.endpoint.path),
+        resolvingAgainstBaseURL: false
+    )!
+
+    if !request.endpoint.queryItems.isEmpty {
+        components.queryItems = request.endpoint.queryItems
+    }
+
+    return components.url!
 }
 
 public enum HTTPMethod: String {
@@ -41,53 +72,31 @@ final class APIClient {
     func execute<R: APIRequest>(
         _ request: R
     ) async throws -> R.Response {
-        
-        guard var url = request.url else {
-            throw APIError.invalidURL
-        }
-        
-        // Query
-        if let query = request.query {
-            
-            var components = URLComponents(
-                url: url,
-                resolvingAgainstBaseURL: true
-            )
-            
-            components?.queryItems = query.map {
-                URLQueryItem(name: $0.key, value: $0.value)
-            }
-            
-            guard let finalURL = components?.url else {
-                throw APIError.invalidURL
-            }
-            
-            url = finalURL
-        }
-        
+
+        let url = makeURL(for: request)
+
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = request.method.rawValue
-        
-        // Body
+
         if let body = request.body {
             urlRequest.httpBody = try JSONEncoder().encode(body)
-            
+
             urlRequest.setValue(
                 "application/json",
                 forHTTPHeaderField: "Content-Type"
             )
         }
-        
+
         let (data, response) = try await session.data(for: urlRequest)
-        
+
         guard let http = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
-        
+
         guard (200..<300).contains(http.statusCode) else {
             throw APIError.httpStatusCode(http.statusCode)
         }
-        
+
         do {
             return try decoder.decode(R.Response.self, from: data)
         } catch {

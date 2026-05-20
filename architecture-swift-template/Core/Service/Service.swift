@@ -14,11 +14,7 @@ struct GetTickerRequest: APIRequest {
 
     var method: HTTPMethod = .get
 
-    var url: URL? {
-        URL(string: "https://indodax.com/api/ticker_all")
-    }
-
-    var query: [String : String]? = nil
+    var endpoint = Endpoint(path: "/api/ticker_all")
 
     var body: EmptyBody? = nil
 }
@@ -30,12 +26,7 @@ struct GetServerTimeRequest: APIRequest {
 
     var method: HTTPMethod = .get
 
-    var url: URL? {
-        URL(string: "https://indodax.com/api/server_time")
-    }
-
-    var query: [String : String]? = nil
+    var endpoint = Endpoint(path: "/api/server_time")
 
     var body: EmptyBody? = nil
 }
-
