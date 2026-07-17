@@ -1,303 +1,213 @@
-# SwiftUI Best Practices Review
+# SwiftUI Best Practices Guide
 
-Review of `architecture-swift-template` against modern SwiftUI/Swift 6 conventions (iOS 26 target). Organized by file, highest-impact items first in the summary at the bottom.
+This started as a one-off review of this repo. It's now a standing guide: a checklist of SwiftUI/Swift conventions this template follows, **why** each one matters, and the mistakes beginners most commonly make when starting their first SwiftUI project. Every rule below is already applied somewhere in this codebase — when in doubt, go read the real file referenced next to the rule.
 
-**Status: all items below have been applied and verified with a successful `xcodebuild` for the iOS Simulator.** Kept as a record of what changed and why.
+Pair this with `README.md`: the README explains *how the architecture is organized* (layers, DI, how to add a feature). This doc explains *how to write the code that goes inside it* without picking up bad habits.
 
-One deliberate behavior change worth flagging: the old code forced server time display into GMT+7 regardless of device settings; the new `Text(_:format:)` rendering uses the device's own locale/timezone instead. That's the more correct default for accessibility/localization, but call it out if GMT+7 was intentional for this Indonesia-only exchange.
+---
 
-## HomeViewModel.swift
+## How to use this doc if you're new to Swift/SwiftUI
 
-**Migrate off `ObservableObject`/`@Published` to `@Observable`.**
+1. Before writing a new feature, skim the checklist headers below — they're the categories of mistakes that are easy to make on your first project.
+2. When you copy a pattern from this repo (e.g. `HomeViewModel`, `GetWeatherForecastRequest`), you're copying something that already follows these rules. Copy the *shape*, not just the code.
+3. When something in your own code feels awkward to write (a huge `body`, a button that needs three lines to do one thing), it's usually a sign one of these rules applies — the "why" explanations below will tell you which one.
 
-This is the biggest structural change. `@Observable` is the modern replacement, gives finer-grained view updates, and drops the `Combine` import entirely.
+---
+
+## 1. State & Data Flow
+
+**Use `@Observable` + `@State`, never `ObservableObject`/`@Published`/`@StateObject`.**
+
+*Why:* `@Observable` (Swift's `Observation` framework) tracks exactly which properties a view actually reads, so a view only redraws when data it uses changes — not on every property change anywhere in the model. It also means one less import (`Combine` isn't needed) and no `$` publisher boilerplate.
 
 ```swift
-// Before
+// Don't
 import Combine
 
 @MainActor
 final class HomeViewModel: ObservableObject {
-    private let container: AppContainer
-    @Published var counter: Int = 0
-    @Published var btcPrice: String = "-"
-    @Published var isLoading: Bool = false
-    @Published var errorMessage: String?
-    @Published var serverTime: String = "-"
-    ...
+    @Published var current: CurrentWeather?
 }
 
-// After
+struct HomeView: View {
+    @StateObject var viewModel: HomeViewModel
+}
+
+// Do — see Features/Home/HomeViewModel.swift
 @Observable
 @MainActor
 final class HomeViewModel {
-    private let container: AppContainer
-    var counter: Int = 0
-    var btcPrice: String = "-"
-    var isLoading: Bool = false
-    var errorMessage: String?
-    var serverDate: Date?
-    ...
-}
-```
-
-**Two inconsistent fetch patterns (`fetchAPI()` via `.task`, `getAPI()` spawning its own internal `Task`).**
-
-Make both plain `async` functions and drive them from `.task` in the view. Internally-spawned tasks aren't cancelled when the view disappears.
-
-```swift
-// Before
-func getAPI() {
-    Task {
-        do {
-            let response = try await container.api.execute(GetTickerRequest())
-            if let btc = response.tickers["btc_idr"] {
-                btcPrice = btc.last ?? "-"
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
+    var current: CurrentWeather?
 }
 
-// After
-func fetchTicker() async {
-    do {
-        let response = try await container.api.execute(GetTickerRequest())
-        if let btc = response.tickers["btc_idr"] {
-            btcPrice = btc.last ?? "-"
-        }
-    } catch {
-        errorMessage = error.localizedDescription
+struct HomeView: View {
+    @State private var viewModel: HomeViewModel
+
+    init(viewModel: HomeViewModel) {
+        self.viewModel = viewModel
     }
 }
 ```
 
-**Store `Date`, not a pre-formatted `String`, and let the view format it.**
+**A ViewModel is always `@MainActor`.** All UI-facing state mutation happens on the main actor — this is what prevents "purple runtime warning" crashes about publishing changes from a background thread.
 
-Avoids allocating a `DateFormatter` on every fetch and moves presentation into the view layer where it belongs.
+**Prefer `Date`/`Measurement`/plain value types over pre-formatted `String` properties.** Format at the point of display (`Text(_:format:)`), not at the point of fetch. It's cheaper (no `DateFormatter` allocation per fetch) and keeps the ViewModel unaware of presentation. See `HomeViewModel.current` (a `CurrentWeather?`, not a formatted string) and `WeatherHeroView` (does the formatting).
 
-```swift
-// Before
-let formatter = DateFormatter()
-formatter.timeZone = TimeZone(secondsFromGMT: 7 * 3600)
-formatter.dateFormat = "dd MMM yyyy HH:mm:ss"
-serverTime = formatter.string(from: date)
+---
 
-// After (in the view model)
-serverDate = date
+## 2. Views & Composition
 
-// After (in the view)
-Text(viewModel.serverDate ?? .now, format: .dateTime.day().month().year().hour().minute().second())
-```
+**One `View` struct per file — extract sections into real `View` structs, not computed `some View` properties.**
 
-## HomeView.swift
-
-**`@StateObject` should become `@State` once the view model is `@Observable`.**
+*Why:* a computed property still lives inside the parent's `body`, so it re-evaluates every time the parent redraws, and it can't have its own `#Preview`. A real `View` struct is independently previewable, independently testable for layout, and only redraws when *its own* inputs change.
 
 ```swift
-// Before
-@StateObject var viewModel: HomeViewModel
-
-// After
-@State private var viewModel: HomeViewModel
-```
-
-**Body is split into computed properties (`templateStatusSection`, `counterRow`, `apiSection`) rather than extracted `View` structs.**
-
-This is called out explicitly in the SwiftUI guidance: prefer real `View` structs in their own files over `some View` computed properties, even with `@ViewBuilder`. It also avoids re-evaluating unrelated sections every time `body` runs.
-
-```swift
-// Before
+// Don't
 private var counterRow: some View {
-    HStack {
-        Text("Counter")
-        Spacer()
-        Text("\(viewModel.counter)").monospacedDigit()
-    }
+    HStack { Text("Counter"); Spacer(); Text("\(counter)") }
 }
 
-// After — separate file, e.g. CounterRow.swift
+// Do — its own file, its own #Preview
 struct CounterRow: View {
     let counter: Int
     var body: some View {
-        HStack {
-            Text("Counter")
-            Spacer()
-            Text("\(counter)").monospacedDigit()
-        }
+        HStack { Text("Counter"); Spacer(); Text("\(counter)") }
     }
 }
 ```
 
-**`.foregroundColor(.red)` is deprecated.**
+**Split each feature folder into `View/` and `UI/`.** `View/` is for screens and feature-specific compositions that own navigation, presentation, or a particular layout (`HomeView`, `WeatherHeroView`, `WeatherAttributionSheet`). `UI/` is for small, reusable, purely-presentational pieces that just take data and render (`WeatherDetailTile`, `HourlyForecastTile`, `WeatherBackground`). See `Features/Home/View/` and `Features/Home/UI/` for the worked example. This split is what keeps a feature folder navigable once it grows past 3–4 files — without it, everything ends up flattened into one folder and you can't tell a screen from a component at a glance.
+
+**Drive async work with `.task`, not `.onAppear` + a manually-spawned `Task`.** `.task` is cancelled automatically when the view disappears; a `Task {}` started inside a method is not, so it can keep running (and mutating state) after the user has navigated away.
 
 ```swift
-// Before
-Text(error).foregroundColor(.red)
+// Don't
+.onAppear { viewModel.getData() }   // internally does Task { ... }
 
-// After
-Text(error).foregroundStyle(.red)
+// Do
+.task { await viewModel.fetchData() }
 ```
 
-**Prefer passing the action directly instead of a trailing closure.**
-
+**Pass button actions directly instead of wrapping them in a closure.**
 ```swift
-// Before
-Button("Increment") {
-    viewModel.increment()
-}
+// Don't
+Button("Increment") { viewModel.increment() }
 
-// After
+// Do
 Button("Increment", action: viewModel.increment)
 ```
 
-**Redundant `.task` + `.onAppear` triggering two different fetches on the same section.**
+**Use `ContentUnavailableView` for empty/error states instead of a custom `Text`.** It's free accessibility and layout correctness — see the error branch in `HomeView`.
 
-Use two `.task` modifiers (or one `.task` that awaits both) instead of mixing `.onAppear` in — `.task` cancels automatically when the view disappears, `.onAppear` does not.
+---
 
-```swift
-// Before
-.task { await viewModel.fetchAPI() }
-.onAppear { viewModel.getAPI() }
+## 3. Networking
 
-// After
-.task { await viewModel.fetchServerTime() }
-.task { await viewModel.fetchTicker() }
-```
+**Model each request as its own `struct` conforming to a shared protocol — never a monolithic "API manager" with one method per endpoint.**
 
-**No `#Preview` block.** Worth adding one for fast iteration in Xcode.
-
-## FontStyle.swift
-
-**Fixed point sizes ignore Dynamic Type entirely** (`.font(.system(size: 27, weight: .bold))`). This is an accessibility issue: users who increase text size system-wide get no scaling at all in this design system.
+*Why:* each request is independently testable, independently mockable, and adding a new endpoint never touches a file another endpoint depends on (no merge conflicts).
 
 ```swift
-// Before
-case .title:
-    content
-        .font(.system(size: 27, weight: .bold))
-        .lineSpacing(6)
+protocol APIRequest {
+    associatedtype Response: Decodable
+    associatedtype Body: Encodable = EmptyBody
 
-// After — base on a Dynamic Type text style so it scales
-case .title:
-    content
-        .font(.title.bold())
-```
-
-If a specific custom size is truly required, use `@ScaledMetric` (iOS 18-) or `.font(.body.scaled(by:))` (iOS 26+) rather than a raw fixed size.
-
-## AppButtonStyle.swift
-
-**`RoundedRectangle(cornerRadius: 12, style: .continuous)` — `.continuous` is already the default, no need to specify it.**
-
-```swift
-// Before
-RoundedRectangle(cornerRadius: 12, style: .continuous)
-
-// After
-RoundedRectangle(cornerRadius: 12)
-```
-
-Minor: the corner radius (`12`) and color (`.mint`) are hardcoded here rather than pulled from `DesignSystem` — worth centralizing alongside `FontStyle.swift`'s typography enum so the whole design system lives in one place.
-
-## Core/Networking/APIClient.swift
-
-**~~`enum Environment` shadows SwiftUI's `Environment` property wrapper.~~ Fixed — renamed to `AppEnvironment`.**
-
-Any top-level type that reuses a framework name (`Environment`, `State`, `Binding`, `Task`, etc.) risks ambiguity the moment a file needs both the framework symbol and the app's own type. Checked the rest of the project's top-level types (`Endpoint`, `Log`, `AppContainer`, `KeyValueStore`, ...) — none of those collide.
-
-```swift
-// Before
-enum Environment {
-    case development
-    case production
+    var method: HTTPMethod { get }
+    var endpoint: Endpoint { get }
+    var body: Body? { get }
 }
-static let environment: Environment = .development
-
-// After
-enum AppEnvironment {
-    case development
-    case production
-}
-static let environment: AppEnvironment = .development
 ```
+See `Core/Service/GetWeatherForecastRequest.swift` for a real example, and `Core/Networking/APIClient.swift` for the one place that actually executes them.
 
-**Force-unwrapped URLs will crash instead of surfacing a recoverable error — and `APIError.invalidURL` already exists but is unused.**
+**Never force-unwrap URL construction — make the failure throw instead.** A hardcoded typo in a URL string shouldn't be able to crash the app in production; it should surface as a normal, catchable error.
 
 ```swift
-// Before
-static var baseURL: URL {
-    switch environment {
-    case .development:
-        return URL(string: "https://indodax.com")!
-    case .production:
-        return URL(string: "https://indodax.com")!
-    }
-}
-
+// Don't
 func makeURL<T: APIRequest>(for request: T) -> URL {
-    var components = URLComponents(
-        url: APIConfig.baseURL.appendingPathComponent(request.endpoint.path),
-        resolvingAgainstBaseURL: false
-    )!
-    ...
+    var components = URLComponents(url: ..., resolvingAgainstBaseURL: false)!
     return components.url!
 }
 
-// After
+// Do — see Core/Networking/APIClient.swift
 func makeURL<T: APIRequest>(for request: T) throws -> URL {
-    guard var components = URLComponents(
-        url: APIConfig.baseURL.appendingPathComponent(request.endpoint.path),
-        resolvingAgainstBaseURL: false
-    ) else {
+    guard var components = URLComponents(url: ..., resolvingAgainstBaseURL: false) else {
         throw APIError.invalidURL
     }
-
-    if !request.endpoint.queryItems.isEmpty {
-        components.queryItems = request.endpoint.queryItems
-    }
-
-    guard let url = components.url else {
-        throw APIError.invalidURL
-    }
-
+    guard let url = components.url else { throw APIError.invalidURL }
     return url
 }
 ```
 
-`execute(_:)` would then `try makeURL(for: request)` and propagate the error instead of crashing.
+**Extract hardcoded, demo-specific values into an injectable model instead of repeating a literal across files.** The Weather demo's city ("Jakarta") used to be duplicated as a literal in the API request's coordinates *and* in two different views — three places to update if the demo city ever changed, and easy to let them drift out of sync. It's now one `WeatherLocation` value, injected through `HomeViewModel`. If you find yourself typing the same literal in more than one file, that's the signal to do this.
 
-## Core/Model/Response.swift
-
-**`TimeResponse.server_time` breaks Swift naming conventions, while `Ticker` right next to it uses `CodingKeys` to map to camelCase.** Align the two for consistency.
-
+**DTO properties should be `camelCase` with `CodingKeys` mapping to the wire format — never leave a property as raw `snake_case`.**
 ```swift
-// Before
-struct TimeResponse: Decodable {
-    let server_time: Int
-}
-
-// After
-struct TimeResponse: Decodable {
-    let serverTime: Int
+struct CurrentWeather: Decodable {
+    let weatherCode: Int   // not weather_code
 
     enum CodingKeys: String, CodingKey {
-        case serverTime = "server_time"
+        case weatherCode = "weather_code"
     }
 }
 ```
 
-Also note: the file header comment still says `Model.swift` even though the file is `Response.swift` — stale comment worth fixing while you're in there.
+---
+
+## 4. Accessibility & Design
+
+**Never hardcode font point sizes — build typography on Dynamic Type text styles.** A fixed `.font(.system(size: 27))` never scales for a user who has increased their system text size; `.font(.title.bold())` does, automatically.
+
+```swift
+// Don't
+.font(.system(size: 27, weight: .bold))
+
+// Do — see Core/UI/FontStyle.swift
+.font(.title.bold())
+```
+If you truly need a custom size (like the giant hero temperature in `WeatherHeroView`), scale it with `@ScaledMetric` rather than hardcoding a raw number — that way it still grows with Dynamic Type instead of staying frozen.
+
+**Use `foregroundStyle()`, not the deprecated `foregroundColor()`.**
+
+**Prefer the system's own components over hand-rolled versions of them.** This template uses Apple's native Liquid Glass APIs directly rather than reinventing them:
+* `.glassCard()` (`Core/UI/GlassCard.swift`) wraps a view in `.glassEffect(_:in:)` for a rounded glass card.
+* `.buttonStyle(.glass)` / `.buttonStyle(.glassProminent)` — Apple's own glass button styles — instead of a custom `ButtonStyle` reimplementing the same look.
+* `Label`, `LabeledContent`, `Grid`/`GridRow`, `ContentUnavailableView` — reach for these before building an `HStack` + `Image` + `Text` combo from scratch.
+
+**Icon-only buttons still need a text label for VoiceOver**, even if you only want the icon visible: `Button("Weather Conditions", systemImage: "info.circle") { ... }.labelStyle(.iconOnly)`. This keeps the visual icon-only look while VoiceOver still announces "Weather Conditions."
 
 ---
 
-## Summary (highest impact first)
+## 5. Naming & Hygiene
 
-1. **Data flow (high):** Move `HomeViewModel` from `ObservableObject`/`@Published`/`@StateObject` to `@Observable`/`@State`. Everything else in the view model touches this.
-2. **Accessibility (high):** `FontStyle.swift`'s fixed font sizes don't respect Dynamic Type — real usability issue for any user with larger text sizes enabled.
-3. **Correctness/robustness (medium):** `APIClient`'s force-unwrapped URL construction can crash; `APIError.invalidURL` already models the failure but is bypassed. Make `makeURL` throwing.
-4. **Concurrency consistency (medium):** Unify `fetchAPI()`/`getAPI()` into two `async` functions both driven by `.task`, dropping the internally-spawned `Task` and the `.onAppear` call.
-5. **View structure (medium):** Extract `HomeView`'s computed-property sections into real `View` structs in their own files.
-6. **Modern API cleanup (low):** `foregroundColor` → `foregroundStyle`, drop redundant `.continuous`, prefer `Button("Increment", action:)`, format dates via `Text(_:format:)` instead of a manual `DateFormatter`.
-7. **Consistency nit (low):** Give `TimeResponse` a `CodingKeys` mapping like `Ticker` already has, and fix the stale `Model.swift` file header comment in `Response.swift`.
+**Don't give your own types the same name as a framework type.** `enum Environment` in this codebase used to shadow SwiftUI's own `@Environment` property wrapper — harmless until some file needed both, at which point it's an ambiguity error. It's now `AppEnvironment`. Before naming a new top-level type, do a quick mental check against common SwiftUI/Foundation names (`Environment`, `State`, `Binding`, `Task`, `Response`, ...).
+
+**One type (struct/class/enum) per file.** Easier to find, easier to review, easier to keep the "View vs UI" split honest.
+
+**Keep file header comments in sync with the actual filename**, especially after a rename — a stale header pointing at a deleted filename is a small thing, but it's exactly the kind of paper cut that makes a beginner reading unfamiliar code assume they're missing context that isn't actually there.
+
+---
+
+## Common first-project mistakes this template already avoids
+
+If you're new to Swift/SwiftUI, these are the traps most beginners fall into on their first real project — all called out above, collected here as a quick gut-check list:
+
+- Reaching for `ObservableObject`/`@Published` out of habit (from older tutorials) instead of `@Observable`
+- Writing all business logic directly inside a view's `body` or `.onAppear`, instead of a ViewModel
+- One giant `View` file with a 300-line `body`, instead of extracting subviews into their own files
+- Force-unwrapping (`!`) anything that touches the network or user input
+- Copy-pasting the same URL/string constant into multiple files "just for now"
+- Fixed font sizes and colors sprinkled everywhere instead of a small shared design system
+- Icon-only buttons with no accessibility label
+- `DispatchQueue.main.async` instead of `async`/`await` and `@MainActor`
+
+---
+
+## Applied history (for provenance)
+
+Everything above has actually been applied to this repo, in roughly this order:
+
+1. **Initial modernization pass** — migrated `HomeViewModel`/`HomeView` from `ObservableObject`/`@StateObject` to `@Observable`/`@State`; fixed the `Environment` → `AppEnvironment` naming collision; made `APIClient`'s URL construction throw instead of force-unwrapping; unified two inconsistent fetch patterns into `.task`-driven `async` functions; fixed `foregroundColor` → `foregroundStyle` and other small modern-API cleanups.
+2. **XcodeGen adoption** — replaced the committed `.xcodeproj` with a `project.yml` spec (gitignoring the generated project file) to avoid `.pbxproj` merge conflicts.
+3. **Feature rewrite** — replaced the Indodax crypto ticker demo with a native-style Weather screen backed by Open-Meteo: hero header, hourly forecast scroll, detail grid, and a "Weather Conditions" attribution sheet, built from Apple's Liquid Glass APIs (`.glassEffect()`, `.buttonStyle(.glass)`) plus a custom `.glassCard()` modifier.
+4. **Cleanup** — removed the now-unrelated counter/increment demo feature and its now-orphaned `AppPrimaryButtonStyle`.
+5. **Folder reorganization** — split `Features/Home/` into `View/` and `UI/`, and extracted the repeated "Jakarta" literal into an injectable `WeatherLocation` model.
