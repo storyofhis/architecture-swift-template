@@ -29,22 +29,22 @@ fileprivate struct TypographyModifier: ViewModifier {
 
         case .title:
             content
-                .font(.system(size: 27, weight: .bold))
+                .font(.title.bold())
                 .lineSpacing(6)
 
         case .body:
             content
-                .font(.system(size: 17, weight: .regular))
+                .font(.body)
                 .lineSpacing(4)
 
         case .button:
             content
-                .font(.system(size: 17, weight: .semibold))
+                .font(.headline)
                 .kerning(1.2)
 
         case .caption:
             content
-                .font(.system(size: 13, weight: .medium))
+                .font(.caption)
                 .kerning(0.5)
         }
     }
