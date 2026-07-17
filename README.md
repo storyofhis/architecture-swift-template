@@ -2,6 +2,22 @@
 
 A modern, highly-scalable, and lightweight Swift/SwiftUI architecture template designed for iOS apps. This repository implements **MVVM (Model-View-ViewModel)** with **Protocol-Oriented Programming (POP)**, modular boundaries, a central **Dependency Injection (DI) Container**, and dynamic async/await networking.
 
+The `Home` feature ships as a working example: a native-style Weather screen (hero header, hourly scroll, detail grid, Liquid Glass components) backed by the free [Open-Meteo](https://open-meteo.com) API — read it end to end as a reference for how a real feature is wired up.
+
+---
+
+## 🚀 Getting Started
+
+This project uses [XcodeGen](https://github.com/yonaskolb/XcodeGen) to generate the `.xcodeproj` from the declarative `project.yml` spec at the repo root, instead of committing the Xcode project file directly. This keeps project settings diffable in PRs and avoids `.pbxproj` merge conflicts — the `.xcodeproj` itself is gitignored.
+
+```bash
+brew install xcodegen
+xcodegen generate
+open architecture-swift-template.xcodeproj
+```
+
+Re-run `xcodegen generate` any time you add, remove, or move Swift files — Xcode won't pick up the change otherwise.
+
 ---
 
 ## 🏗️ Architecture Blueprint
@@ -21,14 +37,14 @@ graph TD
 
     subgraph Features Layer
         RootView --> View[HomeView / ProfileView]
-        View <-->|Data Binding & Intents| ViewModel[HomeViewModel / ProfileViewModel]
+        View <-->|"@Observable state"| ViewModel[HomeViewModel / ProfileViewModel]
     end
 
     subgraph Core Layer
         ViewModel -->|Executes APIRequest| APIClient[APIClient]
         ViewModel -->|Persists Data| Storage[KeyValueStore / UserDefaultStore]
         ViewModel -->|Logs Events| Log[Log Utility]
-        View -->|Applies Design Standards| UI[DesignSystem.Typography / AppPrimaryButtonStyle]
+        View -->|Applies Design Standards| UI[DesignSystem.Typography / GlassCard]
     end
 
     classDef app fill:#e1f5fe,stroke:#039be5,stroke-width:2px;
@@ -46,23 +62,35 @@ graph TD
 
 ```text
 architecture-swift-template/
-├── App/                            # Application Entry & Window Management
+├── project.yml                     # XcodeGen project spec (source of truth for the .xcodeproj)
+│
+├── App/                             # Application Entry & Window Management
 │   ├── architecture_swift_templateApp.swift   # App @main setup & container initialization
-│   └── ContentView.swift           # Application Root View / Router
+│   └── ContentView.swift            # Application Root View / Router
 │
-├── Core/                           # Shared Foundations & Platform Capabilities
-│   ├── DI/                         # Dependency injection graph (AppContainer)
-│   ├── Logging/                    # Logging utilities & interfaces
-│   ├── Model/                      # Shared network payloads & universal DTOs
-│   ├── Networking/                 # Network layer (APIClient, APIRequest protocol)
-│   ├── Service/                    # Concrete requests/endpoints definitions
-│   ├── Storage/                    # Storage interfaces (KeyValueStore, UserDefaultStore)
-│   └── UI/                         # Design System (typography, button styles)
+├── Core/                            # Shared Foundations & Platform Capabilities
+│   ├── DI/                          # Dependency injection graph (AppContainer)
+│   ├── Logging/                     # Logging utilities & interfaces
+│   ├── Model/                       # Shared DTOs (WeatherResponse, CurrentWeather, HourlyEntry,
+│   │                                #   WeatherCondition, WeatherLocation, OpenMeteoDate, EmptyBody)
+│   ├── Networking/                  # Network layer (APIClient, APIRequest protocol, Endpoint, APIError)
+│   ├── Service/                     # Concrete requests (GetWeatherForecastRequest)
+│   ├── Storage/                     # Storage interfaces (KeyValueStore, UserDefaultStore)
+│   └── UI/                          # Design System (DesignSystem.Typography, GlassCard)
 │
-└── Features/                       # Highly decoupled business domains
-    └── Home/                       # Domain capability (UI + state binding)
-        ├── HomeView.swift          # Feature UI implementation
-        └── HomeViewModel.swift     # Screen State management & user event logic
+└── Features/                        # Highly decoupled business domains
+    └── Home/                        # Weather demo feature (UI + state binding)
+        ├── HomeViewModel.swift      # Screen state management & fetch logic
+        ├── View/                    # Screens & feature-specific compositions
+        │   ├── HomeView.swift
+        │   ├── WeatherHeroView.swift
+        │   ├── WeatherDetailGrid.swift
+        │   └── WeatherAttributionSheet.swift
+        └── UI/                      # Small, reusable, purely-presentational pieces
+            ├── WeatherDetailTile.swift
+            ├── HourlyForecastTile.swift
+            ├── HourlyForecastScroll.swift
+            └── WeatherBackground.swift
 ```
 
 ---
@@ -76,18 +104,18 @@ Rather than relying on a monolithic network manager class containing dozens of A
 protocol APIRequest {
     associatedtype Response: Decodable
     associatedtype Body: Encodable = EmptyBody
-    
+
     var method: HTTPMethod { get }
-    var url: URL? { get }
-    var query: [String: String]? { get }
+    var endpoint: Endpoint { get }
     var body: Body? { get }
 }
 ```
 
 * **Benefits**: High modularity, zero merge conflicts on network code, and simple mocking of individual requests.
+* **`Endpoint`**: A lightweight `path` + `queryItems` pair. `APIClient` combines it with `APIConfig.baseURL` and throws `APIError.invalidURL` if the resulting URL can't be constructed — no force unwraps on the network path.
 * **Execution**: The `APIClient` executes requests asynchronously using Swift's native `async/await` syntax:
   ```swift
-  let response = try await container.api.execute(GetServerTimeRequest())
+  let response = try await container.api.execute(GetWeatherForecastRequest())
   ```
 
 ### 2. Constructor-Based Dependency Injection (`AppContainer`)
@@ -97,7 +125,7 @@ final class AppContainer {
     let log: Log.Type
     let store: KeyValueStore
     let api: APIClient
-    
+
     init(
         log: Log.Type = Log.self,
         store: KeyValueStore = UserDefaultStore(),
@@ -121,10 +149,53 @@ protocol KeyValueStore {
 ```
 * **Default Store**: Supported by `UserDefaultStore` which wraps `UserDefaults.standard`.
 * **Mocking**: Eases the creation of an in-memory mock store for automated testing to prevent tests from writing to actual persistent memory.
+* Note: the `Home` feature's Weather demo doesn't currently need persistence, so `store` has no active caller today — it stays in `AppContainer` as an available capability for the next feature that needs it.
 
 ### 4. SwiftUI View-ViewModel Architecture (MVVM)
-* **Views**: Declarative, purely visual, and react directly to changes in state. They delegate all interactive actions to their ViewModels.
-* **ViewModels**: Conformed to `@MainActor` and subclassed from `ObservableObject`. They capture view actions, execute service code, and expose state via `@Published` properties.
+* **Views**: Declarative, purely visual, and react directly to changes in state. They delegate all interactive actions to their ViewModels, and hold them with `@State` — not `@StateObject`.
+* **ViewModels**: Marked `@Observable` and `@MainActor`. They capture view actions, execute service code, and expose state via plain `var` properties — no `@Published`, no `Combine` import required.
+
+```swift
+import Observation
+
+@Observable
+@MainActor
+final class HomeViewModel {
+    private let container: AppContainer
+
+    var current: CurrentWeather?
+    var errorMessage: String?
+
+    init(container: AppContainer) {
+        self.container = container
+    }
+
+    func fetchWeather() async {
+        do {
+            current = try await container.api.execute(GetWeatherForecastRequest()).current
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+```
+
+```swift
+struct HomeView: View {
+    @State private var viewModel: HomeViewModel
+
+    init(viewModel: HomeViewModel) {
+        self.viewModel = viewModel
+    }
+
+    var body: some View {
+        // ...
+        .task {
+            await viewModel.fetchWeather()
+        }
+    }
+}
+```
 
 ---
 
@@ -134,30 +205,32 @@ protocol KeyValueStore {
 Suppose you want to add a **Profile** feature:
 
 #### Step 1: Create the Feature Folder
-Create a new directory: `Features/Profile/`.
+Create a new directory: `Features/Profile/`. Following the `Home` feature's convention, if the screen grows past a single simple layout, split it into:
+* `View/` — the screen itself and any feature-specific section compositions (anything that owns navigation, presentation, or a particular screen's layout)
+* `UI/` — small, reusable, purely-presentational pieces (a tile, a background, a scroll wrapper — anything that just takes data and renders)
 
 #### Step 2: Implement the ViewModel (`ProfileViewModel.swift`)
 ```swift
 import Foundation
-import Combine
+import Observation
 
+@Observable
 @MainActor
-final class ProfileViewModel: ObservableObject {
+final class ProfileViewModel {
     private let container: AppContainer
-    
-    @Published var username: String = ""
-    @Published var isLoading: Bool = false
-    
+
+    var username: String = "Guest User"
+    var isLoading: Bool = false
+
     init(container: AppContainer) {
         self.container = container
         loadProfile()
     }
-    
+
     private func loadProfile() {
-        // Retrieve local value or fallback
         username = container.store.string(forKey: "profile_username") ?? "Guest User"
     }
-    
+
     func updateUsername(_ newName: String) {
         username = newName
         container.store.set(newName, forKey: "profile_username")
@@ -166,49 +239,67 @@ final class ProfileViewModel: ObservableObject {
 }
 ```
 
-#### Step 3: Implement the View (`ProfileView.swift`)
+#### Step 3: Implement the View (`View/ProfileView.swift`)
 ```swift
 import SwiftUI
 
 struct ProfileView: View {
-    @StateObject var viewModel: ProfileViewModel
+    @State private var viewModel: ProfileViewModel
     @State private var inputName: String = ""
-    
+
+    init(viewModel: ProfileViewModel) {
+        self.viewModel = viewModel
+    }
+
     var body: some View {
         VStack(spacing: 20) {
             Text("Welcome, \(viewModel.username)!")
                 .typography(.title)
-            
+
             TextField("Enter your name", text: $inputName)
                 .textFieldStyle(.roundedBorder)
                 .padding(.horizontal)
-            
-            Button("Save Username") {
-                viewModel.updateUsername(inputName)
-            }
-            .buttonStyle(.appPrimary(isFullWidth: false))
+
+            Button("Save Username", action: save)
+                .buttonStyle(.glass)
         }
         .padding()
         .navigationTitle("Profile")
     }
+
+    private func save() {
+        viewModel.updateUsername(inputName)
+    }
 }
 ```
 
-#### Step 4: Hook It Up in your Navigation/Parent View
+#### Step 4: Hook It Up in Navigation
+Prefer `navigationDestination(for:)` over the older `NavigationLink(destination:)` pattern, and never mix the two in the same stack:
 ```swift
-NavigationLink("Go to Profile") {
-    ProfileView(viewModel: ProfileViewModel(container: container))
+enum Route: Hashable {
+    case profile
 }
+
+// Registered once on the NavigationStack
+.navigationDestination(for: Route.self) { route in
+    switch route {
+    case .profile:
+        ProfileView(viewModel: ProfileViewModel(container: container))
+    }
+}
+
+// Anywhere inside the stack
+NavigationLink("Go to Profile", value: Route.profile)
 ```
 
 ---
 
 ### 2. How to Define and Execute a New Network Request
-To request data from an endpoint (e.g., fetch user profile from `https://api.example.com/user`):
+To request data from an endpoint (e.g., fetch a user profile from `https://api.example.com/user`):
 
 #### Step 1: Define the Response DTO (`Core/Model/`)
 ```swift
-struct UserProfileResponse: Decodable {
+struct UserProfileResponse: Decodable, Sendable {
     let id: String
     let name: String
     let email: String
@@ -220,31 +311,28 @@ struct UserProfileResponse: Decodable {
 struct GetUserProfileRequest: APIRequest {
     typealias Response = UserProfileResponse
     typealias Body = EmptyBody // No body is uploaded
-    
+
     var method: HTTPMethod = .get
-    
-    var url: URL? {
-        URL(string: "https://api.example.com/user")
-    }
-    
-    var query: [String: String]? = nil
+
+    var endpoint = Endpoint(path: "/user")
+
     var body: EmptyBody? = nil
 }
 ```
+`Endpoint` is resolved against `APIConfig.baseURL`, so only the path (and optional `queryItems`) needs to be specified here — not a full URL.
 
 #### Step 3: Execute in your ViewModel
 ```swift
-func fetchUserData() {
-    Task {
-        do {
-            let response = try await container.api.execute(GetUserProfileRequest())
-            self.username = response.name
-        } catch {
-            container.log.error("Failed fetching user: \(error.localizedDescription)")
-        }
+func fetchUserData() async {
+    do {
+        let response = try await container.api.execute(GetUserProfileRequest())
+        username = response.name
+    } catch {
+        errorMessage = error.localizedDescription
     }
 }
 ```
+Drive it from the view with `.task { await viewModel.fetchUserData() }` rather than spawning a `Task` manually inside the ViewModel — `.task` is cancelled automatically when the view disappears.
 
 ---
 
@@ -279,14 +367,17 @@ When transitioning this template to a complex corporate or enterprise codebase, 
 1. **Local Storage Upgrades**: Replace `UserDefaults` inside the storage layer with a robust database (such as SwiftData or CoreData) or secure keychain storage by building concrete implementations conforming to a unified storage protocol contract.
 2. **Swift Package Manager (SPM) Modularity**: Scale into multi-target modular architectures by splitting folders (`Core`, `Features/Home`) into separate Swift Packages. This drastically reduces incremental compilation times.
 3. **Advanced Coordinator Pattern**: Introduce a router/coordinator layer if screen-to-screen navigation flows become complex, allowing the ViewModel to trigger navigation events through an abstracted delegate interface instead of embedding hardcoded navigation views inside UI code.
+4. **XcodeGen Targets**: As the app grows additional targets (widgets, watch app, unit test bundles), add them to `project.yml` rather than configuring them by hand in Xcode — keeps every target's settings reviewable in a PR diff.
 
 ---
 
 ## 🧼 Code Management and Best Practices
 
 * **View Ownership**: Views should always be dumb. They bind to ViewModels and style labels, nothing more. Avoid putting async blocks, data parsing, or persistent side-effects inside views.
-* **ViewModel MainActor Binding**: Ensure all ViewModels are annotated with `@MainActor` to prevent multi-threaded state update issues on SwiftUI's main loop.
-* **Consistent Design Primitives**: Rely strictly on the typography and button styles under `Core/UI/`. Avoid setting custom sizes, system fonts, or inline padding manually across view elements.
-  * *Typography*: `Text("Text").typography(.title)` or `Text("Text").typography(.body)`
-  * *Buttons*: `.buttonStyle(.appPrimary())`
+* **ViewModel Observation**: ViewModels use the `@Observable` macro — not `ObservableObject`/`@Published` — and must be annotated `@MainActor` to prevent multi-threaded state update issues on SwiftUI's main loop. Views hold them with `@State`, not `@StateObject`.
+* **View/UI Folder Split**: Inside each feature folder, put full screens and feature-specific compositions in `View/`, and small, reusable, purely-presentational pieces in `UI/`. See `Features/Home/` for a worked example.
+* **Consistent Design Primitives**: Rely on the shared primitives under `Core/UI/` instead of ad hoc styling.
+  * *Typography*: `Text("Text").typography(.title)` or `Text("Text").typography(.body)` — built on Dynamic Type text styles, so it scales correctly with the user's text size setting.
+  * *Cards*: `.glassCard()` wraps a view in Apple's Liquid Glass material (`glassEffect(_:in:)`), shaped as a rounded card.
+  * *Buttons*: prefer the system's own Liquid Glass styles — `.buttonStyle(.glass)` or `.buttonStyle(.glassProminent)` — over hand-rolled button styles.
 * **Dependency Cleanliness**: Never instantiate global shared singletons directly inside features. If a class requires networking, database, or logging capabilities, it *must* receive them through dependencies declared in `AppContainer`.

@@ -7,21 +7,26 @@
 
 import Foundation
 
-enum Environment {
-    case development 
+enum AppEnvironment {
+    case development
     case production
 }
 
 enum APIConfig {
-    static let environment: Environment = .development
-    
-    static var baseURL: URL{
+    static let environment: AppEnvironment = .development
+
+    static var baseURL: URL {
+        let urlString: String
         switch environment {
-        case .development:
-            return URL(string: "https://indodax.com")!
-        case .production:
-            return URL(string: "https://indodax.com")!
+        case .development, .production:
+            urlString = "https://api.open-meteo.com"
         }
+
+        guard let url = URL(string: urlString) else {
+            fatalError("Invalid base URL string: \(urlString)")
+        }
+
+        return url
     }
 }
 
@@ -35,18 +40,24 @@ protocol APIRequest {
     var body: Body? { get }
 }
 
-func makeURL<T: APIRequest>(for request: T) -> URL {
+func makeURL<T: APIRequest>(for request: T) throws -> URL {
 
-    var components = URLComponents(
+    guard var components = URLComponents(
         url: APIConfig.baseURL.appendingPathComponent(request.endpoint.path),
         resolvingAgainstBaseURL: false
-    )!
+    ) else {
+        throw APIError.invalidURL
+    }
 
     if !request.endpoint.queryItems.isEmpty {
         components.queryItems = request.endpoint.queryItems
     }
 
-    return components.url!
+    guard let url = components.url else {
+        throw APIError.invalidURL
+    }
+
+    return url
 }
 
 public enum HTTPMethod: String {
@@ -73,7 +84,7 @@ final class APIClient {
         _ request: R
     ) async throws -> R.Response {
 
-        let url = makeURL(for: request)
+        let url = try makeURL(for: request)
 
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = request.method.rawValue
