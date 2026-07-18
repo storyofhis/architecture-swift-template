@@ -12,14 +12,17 @@ final class AppContainer {
     let log: Log.Type
     let store: KeyValueStore
     let api: APIClient
-    
+    let biometrics: BiometricAuthenticating
+
     init(
         log: Log.Type = Log.self,
         store: KeyValueStore = UserDefaultStore(),
-        api: APIClient = APIClient()
+        api: APIClient = APIClient(),
+        biometrics: BiometricAuthenticating = DeviceBiometricAuthenticator()
     ) {
         self.log = log
         self.store = store
         self.api = api
+        self.biometrics = biometrics
     }
 }
