@@ -74,23 +74,30 @@ architecture-swift-template/
 │   ├── Model/                       # Shared DTOs (WeatherResponse, CurrentWeather, HourlyEntry,
 │   │                                #   WeatherCondition, WeatherLocation, OpenMeteoDate, EmptyBody)
 │   ├── Networking/                  # Network layer (APIClient, APIRequest protocol, Endpoint, APIError)
+│   ├── Security/                    # Biometric auth interfaces (BiometricAuthenticating, DeviceBiometricAuthenticator)
 │   ├── Service/                     # Concrete requests (GetWeatherForecastRequest)
 │   ├── Storage/                     # Storage interfaces (KeyValueStore, UserDefaultStore)
 │   └── UI/                          # Design System (DesignSystem.Typography, GlassCard)
 │
 └── Features/                        # Highly decoupled business domains
-    └── Home/                        # Weather demo feature (UI + state binding)
-        ├── HomeViewModel.swift      # Screen state management & fetch logic
-        ├── View/                    # Screens & feature-specific compositions
-        │   ├── HomeView.swift
-        │   ├── WeatherHeroView.swift
-        │   ├── WeatherDetailGrid.swift
-        │   └── WeatherAttributionSheet.swift
-        └── UI/                      # Small, reusable, purely-presentational pieces
-            ├── WeatherDetailTile.swift
-            ├── HourlyForecastTile.swift
-            ├── HourlyForecastScroll.swift
-            └── WeatherBackground.swift
+    ├── Home/                        # Weather demo feature (UI + state binding)
+    │   ├── HomeViewModel.swift      # Screen state management & fetch logic
+    │   ├── View/                    # Screens & feature-specific compositions
+    │   │   ├── HomeView.swift
+    │   │   ├── WeatherHeroView.swift
+    │   │   ├── WeatherDetailGrid.swift
+    │   │   └── WeatherAttributionSheet.swift
+    │   └── UI/                      # Small, reusable, purely-presentational pieces
+    │       ├── WeatherDetailTile.swift
+    │       ├── HourlyForecastTile.swift
+    │       ├── HourlyForecastScroll.swift
+    │       └── WeatherBackground.swift
+    └── Components/                  # UI component catalog — one screen per native SwiftUI control
+        ├── UIComponentDemo.swift    # Catalog enum (title, icon, destination routing)
+        ├── FaceIDDemoViewModel.swift  # Only demo with real business logic (LocalAuthentication)
+        └── View/                    # ComponentsGalleryView + one *DemoView per component
+            # Alert, Action Sheet, Context Menu, Face ID, Keyboard, List, Menus,
+            # Picker, Sheets, Slider, Stepper, Tab Bar, Text Fields, Toolbars (Top/Bottom)
 ```
 
 ---
